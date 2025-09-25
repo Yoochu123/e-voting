@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dasbor Hasil Pemilihan OSIS</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Poppins', sans-serif;
+            background: #1a202c;
+            color: #e2e8f0;
+        }
+        .progress-bar-fill {
+            transition: width 0.5s ease-in-out;
+        }
+        .candidate-card {
+            background: linear-gradient(145deg, #2d3748, #1a202c);
+            border: 1px solid #4a5568;
+            transition: all 0.3s ease;
+        }
+        .winner-card {
+            border-color: #f6e05e;
+            box-shadow: 0 0 25px rgba(246, 224, 94, 0.4);
+            transform: scale(1.05);
+        }
+        .winner-badge {
+            background: linear-gradient(45deg, #f6e05e, #fbbF24);
+            text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .fade-in {
+            animation: fadeIn 0.5s ease-out forwards;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+
+    <div class="w-full max-w-7xl mx-auto">
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-6xl font-extrabold text-white tracking-wide">
+                HASIL PEMILIHAN KETUA OSIS
+            </h1>
+            <p id="election-status" class="text-xl text-cyan-400 mt-2 font-semibold">Real-Time Quick Count</p>
+        </header>
+
+        <!-- Container untuk Statistik Keseluruhan -->
+        <div id="stats-container" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <!-- Statistik dari JS -->
+        </div>
+
+        <!-- Container untuk Calon -->
+        <main id="candidates-container" class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <!-- Kartu Calon dari JS -->
+        </main>
+        
+        <footer class="text-center mt-8 text-gray-500">
+            <p>Data diperbarui secara otomatis | <span id="clock"></span></p>
+        </footer>
+
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+        import { getFirestore, collection, onSnapshot, query, getDocs, doc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+        // Konfigurasi Firebase yang sama dengan file utama
+        const firebaseConfig = {
+            apiKey: "AIzaSyBhLIvfErc0oDs2Fd3Ojqxstq7cxoQqDck",
+            authDomain: "osis-a58ba.firebaseapp.com",
+            projectId: "osis-a58ba",
+            storageBucket: "osis-a58ba.firebasestorage.app",
+            messagingSenderId: "459759642871",
+            appId: "1:459759642871:web:19481954e75ae15c408bf2"
+        };
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        const candidatesContainer = document.getElementById('candidates-container');
+        const statsContainer = document.getElementById('stats-container');
+        const clockElement = document.getElementById('clock');
+        const electionStatusElement = document.getElementById('election-status');
+
+        // Fungsi untuk mengupdate jam
+        const updateClock = () => {
+            const now = new Date();
+            clockElement.textContent = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        };
+
+        // Fungsi untuk memformat tanggal
+        const formatDate = (date) => {
+            if (!date) return 'Belum diatur';
+            return new Date(date).toLocaleString('id-ID', { dateStyle: 'long', timeStyle: 'short' });
+        };
+        
+        // Listener untuk pengaturan pemilihan (untuk menampilkan status)
+        onSnapshot(doc(db, 'config', 'election'), (docSnap) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                const startTime = data.startTime?.toDate();
+                const endTime = data.endTime?.toDate();
+                const now = new Date();
+
+                if (startTime && endTime) {
+                    if (now < startTime) {
+                        electionStatusElement.textContent = `Pemilihan akan dimulai pada ${formatDate(startTime)}`;
+                        electionStatusElement.classList.remove('text-green-400', 'text-red-400');
+                        electionStatusElement.classList.add('text-yellow-400');
+                    } else if (now > endTime) {
+                        electionStatusElement.textContent = `Pemilihan Telah Berakhir`;
+                        electionStatusElement.classList.remove('text-yellow-400', 'text-green-400');
+                        electionStatusElement.classList.add('text-red-400');
+                    } else {
+                        electionStatusElement.textContent = `Pemilihan Sedang Berlangsung`;
+                        electionStatusElement.classList.remove('text-yellow-400', 'text-red-400');
+                        electionStatusElement.classList.add('text-green-400');
+                    }
+                }
+            }
+        });
+
+        // Listener utama untuk data kandidat dan statistik
+        const listenToElectionData = () => {
+            const candidatesQuery = query(collection(db, 'candidates'));
+            
+            onSnapshot(candidatesQuery, async (snapshot) => {
+                let candidates = [];
+                let totalVotes = 0;
+                
+                snapshot.forEach(doc => {
+                    const data = doc.data();
+                    candidates.push({ id: doc.id, ...data });
+                    totalVotes += (data.votes || 0);
+                });
+
+                // Urutkan kandidat
+                candidates.sort((a, b) => (b.votes || 0) - (a.votes || 0));
+
+                // Update statistik pemilih
+                try {
+                    const [allowedVotersSnap, votersSnap] = await Promise.all([
+                        getDocs(collection(db, 'allowedVoters')),
+                        getDocs(collection(db, 'voters'))
+                    ]);
+
+                    const totalAllowedVoters = allowedVotersSnap.size;
+                    const votedCount = votersSnap.size;
+                    const participation = totalAllowedVoters > 0 ? ((votedCount / totalAllowedVoters) * 100).toFixed(1) : 0;
+                    
+                    statsContainer.innerHTML = `
+                        <div class="bg-gray-800 p-6 rounded-2xl text-center fade-in">
+                            <h3 class="text-xl font-bold text-blue-400 mb-2">Total Suara Masuk</h3>
+                            <p class="text-5xl font-extrabold text-white">${totalVotes}</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-2xl text-center fade-in" style="animation-delay: 0.1s;">
+                            <h3 class="text-xl font-bold text-green-400 mb-2">Partisipasi Pemilih</h3>
+                            <p class="text-5xl font-extrabold text-white">${participation}%</p>
+                        </div>
+                        <div class="bg-gray-800 p-6 rounded-2xl text-center fade-in" style="animation-delay: 0.2s;">
+                            <h3 class="text-xl font-bold text-purple-400 mb-2">Pemilih Terdaftar</h3>
+                            <p class="text-5xl font-extrabold text-white">${totalAllowedVoters}</p>
+                        </div>
+                    `;
+                } catch (error) {
+                    console.error("Error fetching stats:", error);
+                }
+
+
+                // Render kartu kandidat
+                candidatesContainer.innerHTML = '';
+                if (candidates.length === 0) {
+                     candidatesContainer.innerHTML = `<p class="text-center col-span-full text-2xl">Menunggu data kandidat...</p>`;
+                     return;
+                }
+                
+                candidates.forEach((candidate, index) => {
+                    const votes = candidate.votes || 0;
+                    const percentage = totalVotes > 0 ? ((votes / totalVotes) * 100) : 0;
+                    const isWinner = index === 0 && votes > 0;
+
+                    const card = document.createElement('div');
+                    card.className = `candidate-card p-6 rounded-2xl shadow-2xl flex flex-col items-center fade-in ${isWinner ? 'winner-card' : ''}`;
+                    card.style.animationDelay = `${0.3 + index * 0.1}s`;
+
+                    card.innerHTML = `
+                        ${isWinner ? `
+                            <div class="winner-badge absolute -top-4 px-4 py-1 text-black font-bold text-lg rounded-full shadow-lg">
+                                 MEMIMPIN
+                            </div>
+                        ` : ''}
+                        <img src="${candidate.photoBase64}" alt="${candidate.name}" class="w-48 h-48 rounded-full object-cover border-4 ${isWinner ? 'border-yellow-400' : 'border-gray-600'} shadow-lg mb-4">
+                        <h2 class="text-3xl font-bold text-center text-white mb-2">${candidate.name}</h2>
+                        <div class="w-full text-center my-4">
+                            <p class="text-6xl font-extrabold ${isWinner ? 'text-yellow-300' : 'text-cyan-400'}">${votes}</p>
+                            <p class="text-xl text-gray-400">Suara</p>
+                        </div>
+                        <div class="w-full bg-gray-700 rounded-full h-8 mt-2 overflow-hidden border-2 border-gray-600">
+                            <div class="progress-bar-fill h-full rounded-full flex items-center justify-center text-black font-bold text-lg" 
+                                 style="width: ${percentage.toFixed(1)}%; background: linear-gradient(45deg, ${isWinner ? '#f6e05e, #fbbF24' : '#2dd4bf, #38bdf8'});">
+                                ${percentage.toFixed(1)}%
+                            </div>
+                        </div>
+                    `;
+                    candidatesContainer.appendChild(card);
+                });
+            });
+        };
+
+        // Inisialisasi
+        setInterval(updateClock, 1000);
+        updateClock();
+        listenToElectionData();
+    </script>
+</body>
+</html>
